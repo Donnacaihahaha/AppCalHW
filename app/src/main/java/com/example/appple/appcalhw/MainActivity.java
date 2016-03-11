@@ -1,0 +1,226 @@
+package com.example.appple.appcalhw;
+
+import android.content.Intent;
+import android.database.sqlite.SQLiteDatabase;
+import android.os.Bundle;
+import android.support.v7.app.AppCompatActivity;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.CalendarView;
+import android.widget.ListView;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Random;
+import de.greenrobot.dao.QueryBuilder;
+
+public class MainActivity extends AppCompatActivity {
+
+    private CalendarView calendarView;
+    private ListView eventsListView;
+    private ArrayList<Event> eventsList;
+    private EventAdapter eventsListAdapter;
+
+    private DaoMaster.DevOpenHelper calendarDBHelper;
+    private SQLiteDatabase calendarDB;
+    private DaoMaster daoMaster;
+    private DaoSession daoSession;
+    private EventDao eventDao;
+    private final int ADD_EVENT_REQUEST = 1;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        calendarView = (CalendarView) findViewById(R.id.calendar_calendarView);
+        eventsListView = (ListView) findViewById(R.id.events_listView);
+
+        eventsList = new ArrayList<>();
+
+        // Setup the eventsListAdapter
+        eventsListAdapter = new EventAdapter(this, eventsList);
+        eventsListView.setAdapter(eventsListAdapter);
+
+        // initialise the database
+        initDatabase();
+
+        // Populate the eventsList for the date selected on the calendar view
+        setEventsListForDate(new Date(calendarView.getDate()));
+        calendarView.setOnDateChangeListener(new CalendarView.OnDateChangeListener() {
+
+            @Override
+            public void onSelectedDayChange(CalendarView view, int year, int month, int dayOfMonth) {
+                Calendar selectedDay = Calendar.getInstance();
+
+                selectedDay.set(Calendar.YEAR, year);
+                selectedDay.set(Calendar.MONTH, month);
+                selectedDay.set(Calendar.DAY_OF_MONTH, dayOfMonth);
+
+                selectedDay.set(Calendar.HOUR_OF_DAY, 0);
+                selectedDay.set(Calendar.MINUTE, 0);
+                selectedDay.set(Calendar.SECOND, 0);
+                selectedDay.set(Calendar.MILLISECOND, 0);
+
+                setEventsListForDate(selectedDay.getTime());
+            }
+        });
+
+        // Set the action of the 'Add' button
+        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent intent = new Intent(view.getContext(), AddEventActivity.class);
+                startActivityForResult(intent, ADD_EVENT_REQUEST);
+            }
+        });
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.menu_calendar, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+
+        //noinspection SimplifiableIfStatement
+        if (id == R.id.action_settings) {
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+    public void setEventsListForDate(Date date) {
+
+        Calendar today = Calendar.getInstance();
+        today.setTime(date);
+        today.set(Calendar.HOUR_OF_DAY, 0);
+        today.set(Calendar.MINUTE, 0);
+        today.set(Calendar.SECOND, 0);
+        today.set(Calendar.MILLISECOND, 0);
+
+        Calendar tomorrow = Calendar.getInstance();
+        tomorrow.setTime(date);
+        tomorrow.add(Calendar.DATE, 1);
+        tomorrow.set(Calendar.HOUR_OF_DAY, 0);
+        tomorrow.set(Calendar.MINUTE, 0);
+        tomorrow.set(Calendar.SECOND, 0);
+        tomorrow.set(Calendar.MILLISECOND, 0);
+
+        // Get list of Guest objects in database using QueryBuilder.
+        // If list is null, then database tables were created for first time,
+        // so we call "closeReopenDatabase()" to reopen the database.
+        QueryBuilder queryBuilder = eventDao.queryBuilder();
+        List<Event> eventListFromDB = queryBuilder.where(EventDao.Properties.Date.between(today.getTime(), tomorrow.getTime())).list();
+
+        if (eventListFromDB == null) {
+            closeReopenDatabase();
+            eventListFromDB = queryBuilder.where(EventDao.Properties.Date.between(today.getTime(), tomorrow.getTime())).list();
+        }
+
+        eventsList.clear();
+        eventsList.addAll(eventListFromDB);
+
+        // Sort the list before displaying the events
+        Collections.sort(eventsList, new Comparator<Event>() {
+            public int compare(Event event1, Event event2) {
+                return event1.getDate().compareTo(event2.getDate());
+            }
+        });
+
+        eventsListAdapter.notifyDataSetChanged();
+
+        // Force the focus of the calendarView to the specified date
+        calendarView.setDate(date.getTime());
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+
+        // Check which request we're responding to and ensure the result was successful
+        if (requestCode == ADD_EVENT_REQUEST && resultCode == RESULT_OK) {
+
+            // Generate random Id for Guest object to place in database
+            Random rand = new Random();
+
+            // Use rand.nextLong() for Guest object Id.
+            long id = rand.nextLong();
+
+            // Make sure the id doesn't already exist in the database
+            while (eventDao.load(id) != null) {
+                id = rand.nextLong();
+            }
+
+            String title = data.getStringExtra("title");
+            Date date = (Date) data.getSerializableExtra("date");
+
+            Event event = new Event(id, title, date);
+
+            eventDao.insert(event);
+
+            setEventsListForDate(date);
+        }
+    }
+
+    public void deleteEvent(Event event) {
+
+        // Keep the date so we can refresh the list for the same date
+        Date date = event.getDate();
+
+        eventDao.delete(event);
+
+        setEventsListForDate(date);
+    }
+
+    private void initDatabase() {
+        calendarDBHelper = new DaoMaster.DevOpenHelper(this, "ORM.sqlite", null);
+        calendarDB = calendarDBHelper.getWritableDatabase();
+
+        // Get DaoMaster
+        daoMaster = new DaoMaster(calendarDB);
+
+        // Create initial database table if they do not exist
+        DaoMaster.createAllTables(calendarDB, true);
+
+        // Create a database access session
+        daoSession = daoMaster.newSession();
+
+        // Get instance of eventDao
+        eventDao = daoSession.getEventDao();
+    }
+
+    private void closeDatabase() {
+        daoSession.clear();
+        calendarDB.close();
+        calendarDBHelper.close();
+    }
+
+    private void closeReopenDatabase() {
+        closeDatabase();
+
+        calendarDBHelper = new DaoMaster.DevOpenHelper(this, "ORM.sqlite", null);
+        calendarDB = calendarDBHelper.getWritableDatabase();
+
+        //Get DaoMaster
+        daoMaster = new DaoMaster(calendarDB);
+
+        // Create DaoSession instance
+        // Use method in DaoMaster to create a database access session
+        daoSession = daoMaster.newSession();
+
+        // From DaoSession instance, get instance of eventDao
+        eventDao = daoSession.getEventDao();
+    }
+}
+
