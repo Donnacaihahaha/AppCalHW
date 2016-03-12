@@ -20,8 +20,8 @@ public class MainActivity extends AppCompatActivity {
 
     private CalendarView calendarView;
     private ListView eventsListView;
-    private ArrayList<Event> eventsList;
-    private EventAdapter eventsListAdapter;
+    private ArrayList<events> eventsList;
+    private CustomAdapter eventsListAdapter;
 
     private DaoMaster.DevOpenHelper calendarDBHelper;
     private SQLiteDatabase calendarDB;
